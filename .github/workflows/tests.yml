@@ -15,10 +15,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out review branch
+      # On pull_request, checkout the PR merge ref by default; do not pin a branch.
+      - name: Check out tested commit
         uses: actions/checkout@v4
-        with:
-          ref: review/initial-yawmiyat
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -29,7 +28,6 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Run test suite
         env:
-          DATABASE_URL: sqlite:////tmp/yawmiyat-ci-must-not-be-used.db
-          SECRET_KEY: ci-only-not-a-secret
+          # No DATABASE_URL is supplied: every test fixture must configure its own tmp_path SQLite DB.
           COOKIE_SECURE: "0"
         run: pytest -q
