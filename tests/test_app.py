@@ -145,7 +145,8 @@ def test_logout_requires_post_and_csrf(client):
     token = csrf_token(client, "/dashboard")
     response = client.post("/logout", data={"_csrf_token": token}, follow_redirects=True)
     assert response.status_code == 200
-    assert "تسجيل الخروج".encode() not in response.data
+    assert "تم تسجيل الخروج".encode() in response.data
+    assert "nav-logout".encode() not in response.data
 
 
 def test_dashboard_requires_login(client):
