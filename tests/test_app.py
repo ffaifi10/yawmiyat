@@ -186,13 +186,19 @@ def test_production_requires_strong_stable_secret_and_secure_cookie(monkeypatch)
     monkeypatch.delenv("APP_ENV", raising=False)
     with pytest.raises(RuntimeError, match="SECRET_KEY"):
         create_app({"APP_ENV": "production", "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:"})
-    with pytest.raises(RuntimeError, match="COOKIE_SECURE"):
+    with pytest.raises(RuntimeError, match="SECRET_KEY"):
         create_app({
             "APP_ENV": "production", "SECRET_KEY": "x" * 40,
+            "SESSION_COOKIE_SECURE": True, "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
+        })
+    strong_key = "0123456789abcdefABCDEF!@#$%^&*()_+-=XYZ"
+    with pytest.raises(RuntimeError, match="COOKIE_SECURE"):
+        create_app({
+            "APP_ENV": "production", "SECRET_KEY": strong_key,
             "SESSION_COOKIE_SECURE": False, "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
         })
     app = create_app({
-        "TESTING": True, "APP_ENV": "production", "SECRET_KEY": "x" * 40,
+        "TESTING": True, "APP_ENV": "production", "SECRET_KEY": strong_key,
         "SESSION_COOKIE_SECURE": True, "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
     })
     assert app.config["TESTING"] is True
