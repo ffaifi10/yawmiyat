@@ -1,9 +1,11 @@
 """يوميات — Flask application entry point."""
 import os
+import re
+import secrets
 from datetime import datetime, timezone
 from functools import wraps
 
-from flask import Flask, flash, redirect, render_template, request, url_for
+from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
 from flask_login import (
     LoginManager, UserMixin, current_user, login_required, login_user, logout_user
 )
@@ -12,6 +14,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 db = SQLAlchemy()
 login_manager = LoginManager()
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class User(UserMixin, db.Model):
@@ -103,10 +106,29 @@ def create_app(test_config=None):
     login_manager.login_view = "login"
     login_manager.login_message = "يرجى تسجيل الدخول للمتابعة."
     login_manager.login_message_category = "info"
+    login_manager.session_protection = "strong"
 
     @login_manager.user_loader
     def load_user(user_id):
         return db.session.get(User, int(user_id))
+
+    @app.context_processor
+    def inject_csrf_token():
+        def generate_csrf_token():
+            token = session.get("_csrf_token")
+            if token is None:
+                token = secrets.token_urlsafe(32)
+                session["_csrf_token"] = token
+            return token
+        return {"csrf_token": generate_csrf_token}
+
+    @app.before_request
+    def protect_csrf():
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            expected = session.get("_csrf_token")
+            submitted = request.form.get("_csrf_token") or request.headers.get("X-CSRF-Token")
+            if not expected or not submitted or not secrets.compare_digest(expected, submitted):
+                abort(400, description="Missing or invalid CSRF token")
 
     @app.after_request
     def security_headers(response):
@@ -125,7 +147,7 @@ def create_app(test_config=None):
                     flash("ليست لديك صلاحية لتنفيذ هذا الإجراء.", "error")
                     return redirect(url_for("dashboard"))
                 return view(*args, **kwargs)
-            return wrapped
+            return decorator
         return decorator
 
     @app.route("/")
@@ -140,12 +162,18 @@ def create_app(test_config=None):
             name = request.form.get("name", "").strip()
             email = request.form.get("email", "").strip().lower()
             password = request.form.get("password", "")
-            if not name or not email or len(password) < 10:
-                flash("أدخل الاسم والبريد، واجعل كلمة المرور 10 أحرف على الأقل.", "error")
-                return render_template("register.html")
+            valid_input = (
+                1 <= len(name) <= 120
+                and len(email) <= 255
+                and EMAIL_RE.fullmatch(email) is not None
+                and 10 <= len(password) <= 1024
+            )
+            if not valid_input:
+                flash("تحقق من الاسم والبريد الإلكتروني، واجعل كلمة المرور بين 10 و1024 حرفًا.", "error")
+                return render_template("register.html"), 400
             if User.query.filter_by(email=email).first():
                 flash("هذا البريد مسجل بالفعل.", "error")
-                return render_template("register.html")
+                return render_template("register.html"), 400
             user = User(name=name, email=email, role="employee")
             user.set_password(password)
             db.session.add(user)
@@ -162,13 +190,13 @@ def create_app(test_config=None):
         if request.method == "POST":
             email = request.form.get("email", "").strip().lower()
             password = request.form.get("password", "")
-            user = User.query.filter_by(email=email).first()
-            if user and user.check_password(password):
+            user = User.query.filter_by(email=email).first() if len(email) <= 255 else None
+            if user and len(password) <= 1024 and user.check_password(password):
                 login_user(user)
                 return redirect(url_for("dashboard"))
             flash("البريد الإلكتروني أو كلمة المرور غير صحيحة.", "error")
         return render_template("login.html")
-
+    
     @app.route("/logout", methods=["POST"])
     @login_required
     def logout():
