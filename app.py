@@ -2,6 +2,9 @@
 import os
 import re
 import secrets
+import threading
+import time
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 from functools import wraps
 
@@ -15,6 +18,12 @@ from werkzeug.security import check_password_hash, generate_password_hash
 db = SQLAlchemy()
 login_manager = LoginManager()
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_RATE_LIMIT_BUCKETS = defaultdict(deque)
+_RATE_LIMIT_LOCK = threading.Lock()
+_PLACEHOLDER_KEYS = {
+    "", "change-me", "replace-with-a-long-random-secret",
+    "local-development-only-change-me", "secret", "password",
+}
 
 
 class User(UserMixin, db.Model):
@@ -77,8 +86,25 @@ class Attachment(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
+def _consume_rate_limit(key, limit, window_seconds, now=None):
+    """In-process sliding-window limiter. No proxy headers are trusted."""
+    now = time.monotonic() if now is None else now
+    with _RATE_LIMIT_LOCK:
+        attempts = _RATE_LIMIT_BUCKETS[key]
+        while attempts and now - attempts[0] >= window_seconds:
+            attempts.popleft()
+        if len(attempts) >= limit:
+            retry_after = max(1, int(window_seconds - (now - attempts[0])))
+            return False, retry_after
+        attempts.append(now)
+        return True, 0
+
+
 def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=True)
+    cookie_secure_raw = os.environ.get("COOKIE_SECURE", "0").strip().lower()
+    if cookie_secure_raw not in {"0", "1", "false", "true", "no", "yes"}:
+        raise RuntimeError("COOKIE_SECURE must be one of 0/1, false/true, or no/yes.")
     app.config.from_mapping(
         SECRET_KEY=os.environ.get("SECRET_KEY"),
         SQLALCHEMY_DATABASE_URI=os.environ.get(
@@ -87,17 +113,36 @@ def create_app(test_config=None):
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
-        SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "0") == "1",
+        SESSION_COOKIE_SECURE=cookie_secure_raw in {"1", "true", "yes"},
         MAX_CONTENT_LENGTH=16 * 1024 * 1024,
+        LOGIN_RATE_LIMIT=5,
+        LOGIN_RATE_WINDOW=15 * 60,
+        REGISTER_RATE_LIMIT=5,
+        REGISTER_RATE_WINDOW=60 * 60,
     )
     if test_config:
         app.config.update(test_config)
-    if not app.config.get("SECRET_KEY"):
-        # Convenient for local development only; production must set SECRET_KEY.
-        if app.config.get("TESTING") or app.config.get("ENV") == "development":
+
+    environment = str(
+        app.config.get("APP_ENV") or os.environ.get("APP_ENV")
+        or os.environ.get("FLASK_ENV") or app.config.get("ENVIRONMENT") or ""
+    ).strip().lower()
+    production = environment == "production"
+    secret_key = app.config.get("SECRET_KEY")
+    if production:
+        if not isinstance(secret_key, str) or len(secret_key) < 32 or secret_key.strip().lower() in _PLACEHOLDER_KEYS:
+            raise RuntimeError(
+                "Production startup refused: set SECRET_KEY to a stable, randomly generated value of at least 32 characters."
+            )
+        if not app.config.get("SESSION_COOKIE_SECURE"):
+            raise RuntimeError(
+                "Production startup refused: set COOKIE_SECURE=1 only after HTTPS is correctly configured."
+            )
+    elif not secret_key:
+        if app.config.get("TESTING") or environment == "development":
             app.config["SECRET_KEY"] = "local-development-only-change-me"
         else:
-            app.logger.warning("SECRET_KEY is unset. Set it in the deployment environment.")
+            app.logger.warning("SECRET_KEY is unset; set a stable random SECRET_KEY before deployment.")
             app.config["SECRET_KEY"] = os.urandom(32)
 
     os.makedirs(app.instance_path, exist_ok=True)
@@ -110,7 +155,10 @@ def create_app(test_config=None):
 
     @login_manager.user_loader
     def load_user(user_id):
-        return db.session.get(User, int(user_id))
+        try:
+            return db.session.get(User, int(user_id))
+        except (TypeError, ValueError):
+            return None
 
     @app.context_processor
     def inject_csrf_token():
@@ -136,6 +184,15 @@ def create_app(test_config=None):
         response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; base-uri 'self'; object-src 'none'; "
+            "frame-ancestors 'self'; form-action 'self'; img-src 'self' data:; "
+            "style-src 'self'; script-src 'self'; upgrade-insecure-requests" if app.config.get("FORCE_HTTPS_CSP")
+            else "default-src 'self'; base-uri 'self'; object-src 'none'; "
+            "frame-ancestors 'self'; form-action 'self'; img-src 'self' data:; "
+            "style-src 'self'; script-src 'self'"
+        )
         return response
 
     def role_required(*roles):
@@ -144,10 +201,9 @@ def create_app(test_config=None):
             @login_required
             def wrapped(*args, **kwargs):
                 if current_user.role not in roles:
-                    flash("ليست لديك صلاحية لتنفيذ هذا الإجراء.", "error")
-                    return redirect(url_for("dashboard"))
+                    abort(403)
                 return view(*args, **kwargs)
-            return decorator
+            return wrapped
         return decorator
 
     @app.route("/")
@@ -159,6 +215,14 @@ def create_app(test_config=None):
         if current_user.is_authenticated:
             return redirect(url_for("dashboard"))
         if request.method == "POST":
+            allowed, retry_after = _consume_rate_limit(
+                ("register", request.remote_addr or "unknown"),
+                int(app.config["REGISTER_RATE_LIMIT"]),
+                int(app.config["REGISTER_RATE_WINDOW"]),
+            )
+            if not allowed:
+                response = render_template("register.html")
+                return response, 429, {"Retry-After": str(retry_after)}
             name = request.form.get("name", "").strip()
             email = request.form.get("email", "").strip().lower()
             password = request.form.get("password", "")
@@ -172,12 +236,13 @@ def create_app(test_config=None):
                 flash("تحقق من الاسم والبريد الإلكتروني، واجعل كلمة المرور بين 10 و1024 حرفًا.", "error")
                 return render_template("register.html"), 400
             if User.query.filter_by(email=email).first():
-                flash("هذا البريد مسجل بالفعل.", "error")
+                flash("تعذر إنشاء الحساب بهذه البيانات.", "error")
                 return render_template("register.html"), 400
             user = User(name=name, email=email, role="employee")
             user.set_password(password)
             db.session.add(user)
             db.session.commit()
+            session.pop("_csrf_token", None)
             login_user(user)
             flash("تم إنشاء الحساب. أنشئ شركتك وأضف فريقك من لوحة التحكم عند تجهيز هذه الميزة.", "success")
             return redirect(url_for("dashboard"))
@@ -188,29 +253,41 @@ def create_app(test_config=None):
         if current_user.is_authenticated:
             return redirect(url_for("dashboard"))
         if request.method == "POST":
+            allowed, retry_after = _consume_rate_limit(
+                ("login", request.remote_addr or "unknown"),
+                int(app.config["LOGIN_RATE_LIMIT"]),
+                int(app.config["LOGIN_RATE_WINDOW"]),
+            )
+            if not allowed:
+                response = render_template("login.html")
+                return response, 429, {"Retry-After": str(retry_after)}
             email = request.form.get("email", "").strip().lower()
             password = request.form.get("password", "")
             user = User.query.filter_by(email=email).first() if len(email) <= 255 else None
             if user and len(password) <= 1024 and user.check_password(password):
+                session.pop("_csrf_token", None)
                 login_user(user)
                 return redirect(url_for("dashboard"))
             flash("البريد الإلكتروني أو كلمة المرور غير صحيحة.", "error")
         return render_template("login.html")
-    
+
     @app.route("/logout", methods=["POST"])
     @login_required
     def logout():
         logout_user()
+        session.pop("_csrf_token", None)
         flash("تم تسجيل الخروج.", "success")
         return redirect(url_for("index"))
 
     @app.route("/dashboard")
     @login_required
     def dashboard():
+        # No admin-wide data view exists: all users are scoped to their company,
+        # or to tasks they created/are assigned when not yet attached to a company.
         tasks_query = Task.query
-        if current_user.company_id:
+        if current_user.company_id is not None:
             tasks_query = tasks_query.filter_by(company_id=current_user.company_id)
-        elif current_user.role != "admin":
+        else:
             tasks_query = tasks_query.filter(
                 (Task.creator_id == current_user.id) | (Task.assignee_id == current_user.id)
             )
@@ -232,7 +309,6 @@ def create_app(test_config=None):
     def health():
         return {"status": "ok", "app": "yawmiyat"}
 
-    # Schema creation is opt-in, so importing the app does not mutate a production DB.
     if app.config.get("AUTO_CREATE_DB") is True:
         with app.app_context():
             db.create_all()
