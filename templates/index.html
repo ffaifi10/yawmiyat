@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}نظّم يومك{% endblock %}
+{% block content %}
+<section class="hero container">
+  <div class="hero-copy">
+    <span class="eyebrow"><span class="eyebrow-dot"></span> مساحة عمل أوضح لفريقك</span>
+    <h1>كل يومٍ منظم،<br><span>وكل إنجاز في مكانه.</span></h1>
+    <p class="hero-lead">يوميات يساعدك على جمع مهام فريقك وجداول العمل ومتابعة الإنجاز في تجربة عربية سهلة وواضحة.</p>
+    <div class="hero-actions"><a class="button" href="{{ url_for('register') }}">ابدأ باستخدام يوميات <span>←</span></a><a class="text-link" href="{{ url_for('login') }}">لديك حساب؟ سجّل الدخول</a></div>
+    <div class="trust-row"><span class="avatar-stack"><i>م</i><i>س</i><i>ع</i></span><span>مصمم ليتوسع مع فريقك</span><span class="trust-separator">•</span><span>واجهة عربية بالكامل</span></div>
+  </div>
+  <div class="hero-visual" aria-label="معاينة توضيحية للوحة يوميات">
+    <div class="visual-glow"></div>
+    <div class="mock-window">
+      <div class="mock-top"><span class="mock-dots">•••</span><span>مساحة العمل</span><span class="mock-logo">ي</span></div>
+      <div class="mock-body">
+        <aside class="mock-sidebar"><b class="mock-sidebar-brand">يوميات</b><span class="side-active">▦　نظرة عامة</span><span>✓　المهام</span><span>▤　الجداول</span><span>♙　الفريق</span></aside>
+        <div class="mock-content"><div class="mock-greeting"><small>الأحد، مساحة عملك</small><b>أهلًا بك 👋</b></div><div class="mock-stats"><div><small>إجمالي المهام</small><b>24</b><i class="mini-line"></i></div><div><small>تم إنجازها</small><b>16</b><i class="mini-line green"></i></div></div><div class="mock-task-head"><b>مهام هذا الأسبوع</b><small>عرض الكل ←</small></div><div class="mock-task"><i class="task-check">✓</i><span><b>تجهيز خطة الأسبوع</b><small>فريق العمليات</small></span><em class="tag-done">مكتملة</em></div><div class="mock-task"><i class="task-check empty"></i><span><b>مراجعة التصاميم</b><small>فريق الإبداع</small></span><em class="tag-progress">قيد العمل</em></div><div class="mock-task"><i class="task-check empty"></i><span><b>تحديث جدول الفريق</b><small>الموارد البشرية</small></span><em class="tag-wait">قيد الانتظار</em></div></div>
+      </div>
+    </div>
+    <div class="floating-note"><span class="note-icon">✓</span><span><b>خطوة للأمام</b><small>تابع التقدم بكل وضوح</small></span></div>
+  </div>
+</section>
+<section class="features-section"><div class="container"><div class="section-heading"><span class="eyebrow">كل ما تحتاجه في مكان واحد</span><h2>بساطة في التجربة،<br>وضوح في الإنجاز.</h2><p>بنية قابلة للتوسع لإدارة العمل اليومي دون تشتيت.</p></div>
+<div class="feature-grid">
+  <article class="feature-card"><span class="feature-icon violet">✓</span><h3>إدارة المهام</h3><p>رتّب الأولويات وتابع حالة كل مهمة ومسؤوليتها وموعدها.</p></article>
+  <article class="feature-card"><span class="feature-icon blue">▦</span><h3>جداول العمل</h3><p>جهّز بنية لتنظيم المواعيد والجداول المرتبطة بأعضاء الفريق.</p></article>
+  <article class="feature-card"><span class="feature-icon amber">♙</span><h3>الشركات والفريق</h3><p>نموذج أولي يجمع بيانات الشركات والأعضاء ضمن مساحة منظمة.</p></article>
+  <article class="feature-card"><span class="feature-icon mint">↥</span><h3>المرفقات</h3><p>أساس بيانات للمرفقات مع ضرورة إعداد تخزين آمن قبل تفعيل الرفع.</p></article>
+</div></div></section>
+<section class="cta container"><div><span class="eyebrow">ابدأ بخطوة بسيطة</span><h2>اجعل يوم العمل أكثر ترتيبًا.</h2><p>أنشئ حسابًا تجريبيًا واستكشف الواجهة الأولية.</p></div><a class="button button-light" href="{{ url_for('register') }}">إنشاء حساب <span>←</span></a></section>
+{% endblock %}
