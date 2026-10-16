@@ -1,0 +1,35 @@
+name: Test Yawmiyat
+
+on:
+  push:
+    branches:
+      - review/initial-yawmiyat
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out review branch
+        uses: actions/checkout@v4
+        with:
+          ref: review/initial-yawmiyat
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install test dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run test suite
+        env:
+          DATABASE_URL: sqlite:////tmp/yawmiyat-ci-must-not-be-used.db
+          SECRET_KEY: ci-only-not-a-secret
+          COOKIE_SECURE: "0"
+        run: pytest -q
