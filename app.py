@@ -130,7 +130,9 @@ def create_app(test_config=None):
     production = environment == "production"
     secret_key = app.config.get("SECRET_KEY")
     if production:
-        if (not isinstance(secret_key, str) or len(secret_key) < 32\n                or secret_key.strip().lower() in _PLACEHOLDER_KEYS\n                or len(set(secret_key)) < 16):
+        if (not isinstance(secret_key, str) or len(secret_key) < 32
+                or secret_key.strip().lower() in _PLACEHOLDER_KEYS
+                or len(set(secret_key)) < 16):
             raise RuntimeError(
                 "Production startup refused: set SECRET_KEY to a stable, randomly generated value of at least 32 characters."
             )
